@@ -522,7 +522,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.spacing = 12
-        stack.alignment = .fill
+        stack.alignment = .centerX
         
         let imageContainer = NSView()
         imageContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -1307,7 +1307,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
     
     @objc private func collapseAllFoldersAction() {
-        outlineView.collapseItem(nil, expandChildren: true)
+        outlineView.collapseItem(nil, collapseChildren: true)
     }
     
     
