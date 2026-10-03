@@ -150,17 +150,25 @@ PeekX respects your privacy:
 
 If the Quick Look extension doesn't appear after installation:
 
-1. Ensure PeekX.app is in `/Applications`
-2. Launch PeekX once to register the extension
-3. Reset Quick Look cache:
+1. Ensure PeekX.app is placed in `/Applications`
+2. Clear macOS quarantine attribute (especially if downloaded via browser):
    ```bash
-   qlmanage -r cache
+   xattr -cr /Applications/PeekX.app
+   ```
+3. Enable and register the Quick Look extension:
+   ```bash
+   pluginkit -e use -i altic.PeekX.PeekXExt
+   ```
+4. Reset Quick Look cache and restart Finder:
+   ```bash
+   qlmanage -r && qlmanage -r cache
    killall Finder
    ```
-4. Check extension status:
+5. Check extension status:
    ```bash
-   pluginkit -m -v -p com.apple.quicklook.preview | grep PeekX
+   pluginkit -m -v -p com.apple.quicklook.preview | grep -i peekx
    ```
+   *(You should see `+ altic.PeekX.PeekXExt` indicating it is active and enabled)*
 
 ### Permission issues
 

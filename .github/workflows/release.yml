@@ -86,9 +86,9 @@ jobs:
           # 1. Universal bundle
           cp -R "$ORIGINAL_APP" dist/universal/PeekX.app
           if [ -d "dist/universal/PeekX.app/Contents/PlugIns" ]; then
-            find "dist/universal/PeekX.app/Contents/PlugIns" -name "*.appex" -type d -exec codesign --force --deep --sign - {} +
+            find "dist/universal/PeekX.app/Contents/PlugIns" -name "*.appex" -type d -exec codesign --force --sign - --entitlements PeekXExt/PeekXExt.entitlements {} +
           fi
-          codesign --force --deep --sign - "dist/universal/PeekX.app"
+          codesign --force --sign - --entitlements PeekX/PeekX.entitlements "dist/universal/PeekX.app"
           codesign --verify --deep --strict --verbose=2 "dist/universal/PeekX.app"
 
           # 2. Apple Silicon (arm64) bundle
@@ -102,11 +102,11 @@ jobs:
                 name=$(basename "$appex" .appex)
                 lipo -thin arm64 "$appex/Contents/MacOS/$name" -output "$appex/Contents/MacOS/$name.thin"
                 mv "$appex/Contents/MacOS/$name.thin" "$appex/Contents/MacOS/$name"
-                codesign --force --deep --sign - "$appex"
+                codesign --force --sign - --entitlements PeekXExt/PeekXExt.entitlements "$appex"
               fi
             done
           fi
-          codesign --force --deep --sign - "dist/arm64/PeekX.app"
+          codesign --force --sign - --entitlements PeekX/PeekX.entitlements "dist/arm64/PeekX.app"
           codesign --verify --deep --strict --verbose=2 "dist/arm64/PeekX.app"
 
           # 3. Intel (x86_64) bundle
@@ -120,11 +120,11 @@ jobs:
                 name=$(basename "$appex" .appex)
                 lipo -thin x86_64 "$appex/Contents/MacOS/$name" -output "$appex/Contents/MacOS/$name.thin"
                 mv "$appex/Contents/MacOS/$name.thin" "$appex/Contents/MacOS/$name"
-                codesign --force --deep --sign - "$appex"
+                codesign --force --sign - --entitlements PeekXExt/PeekXExt.entitlements "$appex"
               fi
             done
           fi
-          codesign --force --deep --sign - "dist/x86_64/PeekX.app"
+          codesign --force --sign - --entitlements PeekX/PeekX.entitlements "dist/x86_64/PeekX.app"
           codesign --verify --deep --strict --verbose=2 "dist/x86_64/PeekX.app"
 
           echo "--- Architecture Verification ---"

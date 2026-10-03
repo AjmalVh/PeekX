@@ -14,6 +14,7 @@ cask "peekx" do
   app "PeekX.app"
 
   postflight do
+    system_command "/usr/bin/pluginkit", args: ["-e", "use", "-i", "altic.PeekX.PeekXExt"]
     system_command "/usr/bin/qlmanage", args: ["-r", "cache"]
     system_command "/usr/bin/killall", args: ["Finder"], sudo: false
   end
