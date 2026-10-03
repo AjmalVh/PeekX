@@ -9,66 +9,21 @@ import ImageIO
 import WebKit
 import QuartzCore  // For CATransaction
 import PDFKit
+import os.log
 
 // MARK: - Debug Logger
 final class DebugLogger {
     static let shared = DebugLogger()
+    private let logger = os.Logger(subsystem: "altic.PeekX.PeekXExt", category: "Preview")
     
-    private let fileURL: URL
-    private let queue = DispatchQueue(label: "com.peekx.logger", qos: .utility)
-    private let formatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-    private let maxSize: UInt64 = 256 * 1024 // 256 KB
-    
-    private init() {
-        let temp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        fileURL = temp.appendingPathComponent("PeekXExt.log")
-    }
+    private init() {}
     
     func log(_ message: String) {
-        let timestamp = formatter.string(from: Date())
-        let entry = "[\(timestamp)] \(message)\n"
-        queue.async {
-            if let data = entry.data(using: .utf8) {
-                self.append(data)
-            }
-            NSLog(message)
-        }
+        logger.debug("\(message, privacy: .public)")
+        NSLog("[PeekXExt] %@", message)
     }
     
-    func locationDescription() -> String { fileURL.path }
-    
-    private func append(_ data: Data) {
-        do {
-            if FileManager.default.fileExists(atPath: fileURL.path) == false {
-                try data.write(to: fileURL, options: .atomic)
-            } else {
-                let handle = try FileHandle(forWritingTo: fileURL)
-                try handle.seekToEnd()
-                try handle.write(contentsOf: data)
-                try handle.close()
-            }
-            pruneIfNeeded()
-        } catch {
-            NSLog("PeekX logger error: \(error.localizedDescription)")
-        }
-    }
-    
-    private func pruneIfNeeded() {
-        guard
-            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
-            let size = attributes[.size] as? UInt64,
-            size > maxSize
-        else { return }
-        
-        if let data = try? Data(contentsOf: fileURL) {
-            let trimmed = data.suffix(Int(maxSize / 2))
-            try? trimmed.write(to: fileURL, options: .atomic)
-        }
-    }
+    func locationDescription() -> String { "System Console (altic.PeekX.PeekXExt)" }
 }
 
 // MARK: - Custom Outline View
@@ -262,6 +217,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private var didSetInitialSplitPosition = false
     private var singleFileMode = false
     private var previewUpdateWorkItem: DispatchWorkItem?
+    private var currentSecurityScopedURL: URL?
+    
+    deinit {
+        currentSecurityScopedURL?.stopAccessingSecurityScopedResource()
+    }
     
     // MARK: - Formatters
     
@@ -636,6 +596,14 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     
     // MARK: - Preview Loading
     func preparePreviewOfFile(at url: URL, completionHandler handler: @escaping (Error?) -> Void) {
+        if let oldURL = currentSecurityScopedURL {
+            oldURL.stopAccessingSecurityScopedResource()
+            currentSecurityScopedURL = nil
+        }
+        if url.startAccessingSecurityScopedResource() {
+            currentSecurityScopedURL = url
+        }
+        
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 // Check if directory

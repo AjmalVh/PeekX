@@ -20,8 +20,10 @@ cask "peekx" do
   end
 
   zap trash: [
-    "~/Library/Group Containers/group.altic.PeekX",
-    "~/Library/Preferences/group.altic.PeekX.plist",
-    "~/Library/Application Scripts/group.altic.PeekX",
+    "~/Library/Application Scripts/altic.PeekX",
+    "~/Library/Application Scripts/altic.PeekX.PeekXExt",
+    "~/Library/Containers/altic.PeekX",
+    "~/Library/Containers/altic.PeekX.PeekXExt",
+    "~/Library/Preferences/altic.PeekX.plist",
   ]
 end

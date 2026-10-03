@@ -32,28 +32,18 @@ struct SharedSettings: Codable, Equatable {
         calculateFolderSizeRecursively: true
     )
     
-    static let appGroupIdentifier = "group.altic.PeekX"
-    
     static func load() -> SharedSettings {
-        guard let userDefaults = UserDefaults(suiteName: appGroupIdentifier) else {
-            return .default
-        }
-        
-        guard let data = userDefaults.data(forKey: "settings"),
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: "settings"),
               let settings = try? JSONDecoder().decode(SharedSettings.self, from: data) else {
             return .default
         }
-        
         return settings
     }
     
     func save() {
-        guard let userDefaults = UserDefaults(suiteName: SharedSettings.appGroupIdentifier) else {
-            return
-        }
-        
         if let data = try? JSONEncoder().encode(self) {
-            userDefaults.set(data, forKey: "settings")
+            UserDefaults.standard.set(data, forKey: "settings")
         }
     }
 }
