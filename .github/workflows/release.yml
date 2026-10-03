@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag / Version name to release (e.g. v1.1.1, v1.2)'
+        required: false
+        default: ''
+      draft:
+        description: 'Create draft release'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Create pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version and Tag
+        id: versioning
+        run: |
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            TAG="${{ inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            PROJ_VERSION=$(grep -m1 "MARKETING_VERSION" PeekX.xcodeproj/project.pbxproj | awk '{print $3}' | tr -d '";')
+            TAG="v${PROJ_VERSION:-1.1}"
+          fi
+          VERSION="${TAG#v}"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Building for Tag: $TAG (Version: $VERSION)"
+
+      - name: Show Xcode & System Info
+        run: |
+          xcodebuild -version
+          sw_vers
+          uname -m
+
+      - name: Build PeekX (Universal Binary)
+        run: |
+          xcodebuild clean build \
+            -project PeekX.xcodeproj \
+            -scheme PeekX \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath ./build \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=""
+
+      - name: Code Sign Binaries (Ad-Hoc)
+        run: |
+          APP_PATH="./build/Build/Products/Release/PeekX.app"
+          if [ -d "$APP_PATH/Contents/PlugIns" ]; then
+            find "$APP_PATH/Contents/PlugIns" -name "*.appex" -type d -exec codesign --force --deep --sign - {} +
+          fi
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Package DMG and ZIP
+        run: |
+          APP_PATH="./build/Build/Products/Release/PeekX.app"
+          DMG_STAGING="dmg_staging"
+          rm -rf "$DMG_STAGING"
+          mkdir -p "$DMG_STAGING"
+          cp -R "$APP_PATH" "$DMG_STAGING/"
+          ln -s /Applications "$DMG_STAGING/Applications"
+
+          DMG_NAME="PeekX-${VERSION}.dmg"
+          ZIP_NAME="PeekX-${VERSION}.zip"
+
+          echo "Creating $DMG_NAME..."
+          hdiutil create \
+            -volname "PeekX" \
+            -srcfolder "$DMG_STAGING" \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+
+          echo "Creating $ZIP_NAME..."
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+
+          echo "Generating SHA-256 checksums..."
+          shasum -a 256 "$DMG_NAME" > "${DMG_NAME}.sha256"
+          shasum -a 256 "$ZIP_NAME" > "${ZIP_NAME}.sha256"
+
+          ls -lh "$DMG_NAME" "$ZIP_NAME" *.sha256
+
+      - name: Upload Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PeekX-${{ env.VERSION }}
+          path: |
+            PeekX-${{ env.VERSION }}.dmg
+            PeekX-${{ env.VERSION }}.zip
+            PeekX-${{ env.VERSION }}.dmg.sha256
+            PeekX-${{ env.VERSION }}.zip.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DMG_NAME="PeekX-${VERSION}.dmg"
+          ZIP_NAME="PeekX-${VERSION}.zip"
+
+          EXTRA_FLAGS=()
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            EXTRA_FLAGS+=(--draft)
+          fi
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            EXTRA_FLAGS+=(--prerelease)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Uploading/updating release assets..."
+            gh release upload "$TAG" \
+              "$DMG_NAME" \
+              "$ZIP_NAME" \
+              "${DMG_NAME}.sha256" \
+              "${ZIP_NAME}.sha256" \
+              --clobber
+          else
+            echo "Creating release $TAG..."
+            gh release create "$TAG" \
+              "$DMG_NAME" \
+              "$ZIP_NAME" \
+              "${DMG_NAME}.sha256" \
+              "${ZIP_NAME}.sha256" \
+              --title "PeekX ${TAG}" \
+              --generate-notes \
+              "${EXTRA_FLAGS[@]}"
+          fi

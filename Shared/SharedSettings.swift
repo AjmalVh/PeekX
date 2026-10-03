@@ -14,6 +14,10 @@ struct SharedSettings: Codable, Equatable {
     var showLargestFiles: Bool
     var maxRecentFiles: Int
     var maxLargestFiles: Int
+    var previewWidth: Double
+    var previewHeight: Double
+    var savedSplitPosition: Double?
+    var calculateFolderSizeRecursively: Bool
     
     static let `default` = SharedSettings(
         showHiddenFiles: false,
@@ -21,7 +25,11 @@ struct SharedSettings: Codable, Equatable {
         showRecentFiles: true,
         showLargestFiles: true,
         maxRecentFiles: 10,
-        maxLargestFiles: 10
+        maxLargestFiles: 10,
+        previewWidth: 900,
+        previewHeight: 600,
+        savedSplitPosition: nil,
+        calculateFolderSizeRecursively: true
     )
     
     static let appGroupIdentifier = "group.altic.PeekX"

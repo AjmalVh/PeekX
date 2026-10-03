@@ -8,6 +8,7 @@ import QuickLook
 import ImageIO
 import WebKit
 import QuartzCore  // For CATransaction
+import PDFKit
 
 // MARK: - Debug Logger
 final class DebugLogger {
@@ -116,6 +117,7 @@ final class FileItem: NSObject, QLPreviewItem {
     // Cached type checks for fast preview decisions
     lazy var isImage: Bool = contentType?.conforms(to: .image) ?? false
     lazy var isText: Bool = contentType?.conforms(to: .text) ?? false || url.pathExtension.lowercased() == "md"
+    lazy var isPDF: Bool = contentType?.conforms(to: .pdf) ?? false || url.pathExtension.lowercased() == "pdf"
     lazy var isMedia: Bool = contentType?.conforms(to: .audiovisualContent) ?? false
     
     init(url: URL, resourceValues: URLResourceValues, parent: FileItem? = nil) {
@@ -281,8 +283,12 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     // MARK: - View Lifecycle
     
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        let settings = SharedSettings.load()
+        let width = CGFloat(settings.previewWidth)
+        let height = CGFloat(settings.previewHeight)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         container.translatesAutoresizingMaskIntoConstraints = false
+        self.preferredContentSize = CGSize(width: width, height: height)
         
         // Main Vertical Stack
         let stack = NSStackView()
@@ -324,6 +330,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.isVertical = true
         splitView.dividerStyle = .thin
+        splitView.delegate = self
         splitView.addArrangedSubview(scrollView)
         previewPane = createPreviewPane()
         splitView.addArrangedSubview(previewPane)
@@ -433,17 +440,26 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         filterControl.selectedSegment = FilterType.all.rawValue
         filterControl.translatesAutoresizingMaskIntoConstraints = false
         
-        let stack = NSStackView(views: [filterControl])
+        let expandAllBtn = NSButton(image: NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Expand All Folders") ?? NSImage(), target: self, action: #selector(expandAllFoldersAction))
+        expandAllBtn.bezelStyle = .texturedRounded
+        expandAllBtn.toolTip = "Expand All Folders (⌥→)"
+        expandAllBtn.translatesAutoresizingMaskIntoConstraints = false
+        
+        let collapseAllBtn = NSButton(image: NSImage(systemSymbolName: "arrow.down.right.and.arrow.up.left", accessibilityDescription: "Collapse All Folders") ?? NSImage(), target: self, action: #selector(collapseAllFoldersAction))
+        collapseAllBtn.bezelStyle = .texturedRounded
+        collapseAllBtn.toolTip = "Collapse All Folders (⌥←)"
+        collapseAllBtn.translatesAutoresizingMaskIntoConstraints = false
+        
+        let stack = NSStackView(views: [filterControl, expandAllBtn, collapseAllBtn])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 8
         
-        // Ensure the stack itself doesn't force a specific width if not needed, 
-        // but we can center the filter control inside it.
-        
         NSLayoutConstraint.activate([
-            filterControl.widthAnchor.constraint(equalToConstant: 320)
+            filterControl.widthAnchor.constraint(equalToConstant: 320),
+            expandAllBtn.widthAnchor.constraint(equalToConstant: 28),
+            collapseAllBtn.widthAnchor.constraint(equalToConstant: 28)
         ])
         
         return stack
@@ -453,9 +469,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         view.layoutSubtreeIfNeeded()
         let totalWidth = splitView.bounds.width
         guard totalWidth > 0 else { return }
-        let previewMin: CGFloat = 360
-        let outlineMin: CGFloat = 320
-        let desiredLeft = max(outlineMin, min(totalWidth - previewMin, totalWidth * 0.4))
+        let settings = SharedSettings.load()
+        let previewMin: CGFloat = 340
+        let outlineMin: CGFloat = 280
+        let desiredLeft: CGFloat
+        if let saved = settings.savedSplitPosition, CGFloat(saved) >= outlineMin, CGFloat(saved) <= totalWidth - previewMin {
+            desiredLeft = CGFloat(saved)
+        } else {
+            desiredLeft = max(outlineMin, min(totalWidth - previewMin, totalWidth * 0.45))
+        }
         splitView.setPosition(desiredLeft, ofDividerAt: 0)
     }
     
@@ -500,7 +522,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.spacing = 12
-        stack.alignment = .leading
+        stack.alignment = .fill
         
         let imageContainer = NSView()
         imageContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -530,8 +552,6 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         imageContainer.addSubview(webView)
         imageContainer.addSubview(previewSpinner)
         
-        let flexibleWidth = imageContainer.widthAnchor.constraint(equalToConstant: 0)
-        flexibleWidth.priority = .defaultLow
         NSLayoutConstraint.activate([
             previewImageView.leadingAnchor.constraint(equalTo: imageContainer.leadingAnchor),
             previewImageView.trailingAnchor.constraint(equalTo: imageContainer.trailingAnchor),
@@ -546,23 +566,26 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             previewSpinner.centerXAnchor.constraint(equalTo: imageContainer.centerXAnchor),
             previewSpinner.centerYAnchor.constraint(equalTo: imageContainer.centerYAnchor),
             
-            imageContainer.heightAnchor.constraint(equalToConstant: 340),
-            flexibleWidth
+            imageContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            imageContainer.heightAnchor.constraint(equalToConstant: 340)
         ])
         
         previewTitleLabel = NSTextField(labelWithString: "No Selection")
         previewTitleLabel.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         previewTitleLabel.lineBreakMode = .byTruncatingTail
+        previewTitleLabel.alignment = .center
         
         previewInfoLabel = NSTextField(labelWithString: "Select a file to preview.")
         previewInfoLabel.font = NSFont.systemFont(ofSize: 12)
         previewInfoLabel.textColor = .secondaryLabelColor
         previewInfoLabel.lineBreakMode = .byWordWrapping
+        previewInfoLabel.alignment = .center
         
         previewMessageLabel = NSTextField(labelWithString: "")
         previewMessageLabel.font = NSFont.systemFont(ofSize: 12)
         previewMessageLabel.textColor = .tertiaryLabelColor
         previewMessageLabel.lineBreakMode = .byWordWrapping
+        previewMessageLabel.alignment = .center
         previewMessageLabel.isHidden = true
         
         stack.addArrangedSubview(imageContainer)
@@ -573,10 +596,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         
         pane.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: pane.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: pane.bottomAnchor)
+            stack.topAnchor.constraint(equalTo: pane.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: pane.bottomAnchor, constant: -12)
         ])
         
         return pane
@@ -618,102 +641,19 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 // Check if directory
                 let values = try url.resourceValues(forKeys: [.isDirectoryKey])
                 if values.isDirectory == false {
-                    // Single file mode - HELLO WORLD TEST
+                    // Single file mode
                     DebugLogger.shared.log("✅ DETECTED SINGLE FILE: \(url.lastPathComponent)")
-                    NSLog("✅ PeekX: DETECTED SINGLE FILE: \(url.lastPathComponent)")
                     
                     DispatchQueue.main.async {
-                        // SINGLE FILE MODE
                         self.applySingleFileLayout(true)
                         
-                        // Load markdown content asynchronously
                         DispatchQueue.global(qos: .userInitiated).async {
                             let content = (try? String(contentsOf: url, encoding: .utf8)) ?? "Could not read file."
-                            // Escape the content for safe embedding in JS
-                            let escapedContent = content
-                                .replacingOccurrences(of: "\\", with: "\\\\")
-                                .replacingOccurrences(of: "`", with: "\\`")
-                                .replacingOccurrences(of: "$", with: "\\$")
-                            
-                            let html = """
-                            <!DOCTYPE html>
-                            <html>
-                            <head>
-                                <meta charset="utf-8">
-                                <meta name="viewport" content="width=device-width, initial-scale=1">
-                                <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
-                                <style>
-                                    :root { color-scheme: light dark; }
-                                    body {
-                                        margin: 0;
-                                        padding: 20px 60px 40px 60px;
-                                        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                                        font-size: 15px;
-                                        line-height: 1.6;
-                                        color: #1d1d1f;
-                                        background: #ffffff;
-                                    }
-                                    @media (prefers-color-scheme: dark) {
-                                        body { color: #e5e5e5; background: #1e1e1e; }
-                                        a { color: #58a6ff; }
-                                        code { background: rgba(110,118,129,0.2); color: #e5e5e5; }
-                                        pre { background: rgba(110,118,129,0.15); border-color: rgba(110,118,129,0.3); }
-                                        h1, h2 { border-bottom-color: rgba(110,118,129,0.3); }
-                                        th { background: rgba(110,118,129,0.15); }
-                                        td, th { border-color: rgba(110,118,129,0.3); }
-                                        blockquote { border-left-color: rgba(110,118,129,0.4); color: #a0a0a0; }
-                                    }
-                                    h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }
-                                    h1 { font-size: 2em; border-bottom: 1px solid #e1e4e8; padding-bottom: 8px; }
-                                    h2 { font-size: 1.5em; border-bottom: 1px solid #e1e4e8; padding-bottom: 6px; }
-                                    h3 { font-size: 1.25em; }
-                                    p { margin: 0 0 16px 0; }
-                                    a { color: #0969da; text-decoration: none; }
-                                    a:hover { text-decoration: underline; }
-                                    code {
-                                        font-family: "SF Mono", Monaco, Menlo, Consolas, monospace;
-                                        font-size: 13px;
-                                        background: rgba(175,184,193,0.2);
-                                        padding: 2px 6px;
-                                        border-radius: 4px;
-                                    }
-                                    pre {
-                                        background: #f6f8fa;
-                                        padding: 16px;
-                                        border-radius: 8px;
-                                        overflow-x: auto;
-                                        border: 1px solid #e1e4e8;
-                                        margin: 16px 0;
-                                    }
-                                    pre code { background: none; padding: 0; }
-                                    ul, ol { margin: 0 0 16px 0; padding-left: 32px; }
-                                    li { margin: 4px 0; }
-                                    blockquote {
-                                        margin: 0 0 16px 0;
-                                        padding: 0 16px;
-                                        border-left: 4px solid #d0d7de;
-                                        color: #57606a;
-                                    }
-                                    table { border-collapse: collapse; width: 100%; margin: 16px 0; }
-                                    th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
-                                    th { background: #f6f8fa; font-weight: 600; }
-                                    img { max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; }
-                                </style>
-                            </head>
-                            <body>
-                                <div id="content"></div>
-                                <script>
-                                    const markdown = `\(escapedContent)`;
-                                    document.getElementById('content').innerHTML = marked.parse(markdown);
-                                </script>
-                            </body>
-                            </html>
-                            """
+                            let html = self.buildMarkdownHTML(content: content, isFolderPreview: false)
                             
                             DispatchQueue.main.async {
                                 self.singleFileWebView.loadHTMLString(html, baseURL: url.deletingLastPathComponent())
                                 DebugLogger.shared.log("✅ Markdown rendered for \(url.lastPathComponent)")
-                                NSLog("✅ PeekX: Markdown rendered for \(url.lastPathComponent)")
                             }
                         }
                         
@@ -750,7 +690,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 }
                 self.sortFileItems(&rootItems)
                 
-                let infoText = "\(self.byteFormatter.string(fromByteCount: totalSize)) · \(folderCount) folders, \(fileCount) files"
+                let initialInfoText = "\(self.byteFormatter.string(fromByteCount: totalSize)) · \(folderCount) folders, \(fileCount) files"
                 
                 DispatchQueue.main.async {
                     self.applySingleFileLayout(false)
@@ -762,10 +702,19 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                     self.rebuildVisibleRootItems()
                     self.iconImageView.image = icon
                     self.titleLabel.stringValue = url.lastPathComponent
-                    self.infoLabel.stringValue = infoText
+                    self.infoLabel.stringValue = initialInfoText
                     self.outlineView.reloadData()
                     self.syncPreviewWithSelection()
                     handler(nil)
+                    
+                    // Asynchronously calculate accurate recursive metrics if enabled
+                    if SharedSettings.load().calculateFolderSizeRecursively {
+                        self.calculateFolderMetrics(at: url) { [weak self] recursiveSize, recursiveFolders, recursiveFiles in
+                            guard let self = self, self.previewRootURL == url else { return }
+                            let updatedInfo = "\(self.byteFormatter.string(fromByteCount: recursiveSize)) · \(recursiveFolders) folders, \(recursiveFiles) files"
+                            self.infoLabel.stringValue = updatedInfo
+                        }
+                    }
                 }
             } catch {
                 DebugLogger.shared.log("Failed to build preview for \(url.lastPathComponent): \(error.localizedDescription)")
@@ -995,6 +944,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             webView.isHidden = false
             previewMessageLabel.isHidden = true
             loadMarkdownPreview(for: item)
+        } else if item.isPDF {
+            webView.isHidden = true
+            previewImageView.isHidden = false
+            previewMessageLabel.isHidden = true
+            loadPDFPreview(for: item)
         } else {
             webView.isHidden = true
             previewImageView.isHidden = false
@@ -1002,7 +956,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 guard let self, self.previewedItem === item else { return }
                 self.previewImageView.image = icon
             }
-            previewMessageLabel.stringValue = "Preview available for images and markdown only."
+            previewMessageLabel.stringValue = "Preview available for images, PDFs, and markdown."
             previewMessageLabel.isHidden = false
         }
     }
@@ -1014,96 +968,267 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
     
     private func loadMarkdownPreview(for item: FileItem) {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
             let text = (try? String(contentsOf: item.url, encoding: .utf8)) ?? ""
-            let htmlBody = self.makeHTML(fromMarkdown: text)
-            let template = """
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <style>
-                :root { color-scheme: light dark; }
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                    margin: 0;
-                    padding: 24px 28px;
-                    line-height: 1.5;
-                    background: transparent;
-                    color: #1f1f1f;
-                }
-                @media (prefers-color-scheme: dark) {
-                    body { color: #e5e5e5; }
-                }
-                h1, h2, h3, h4, h5, h6 { font-weight: 600; }
-                pre, code {
-                    font-family: Menlo, SFMono-Regular, Consolas, monospace;
-                }
-                pre {
-                    background-color: rgba(142,142,147,0.08);
-                    padding: 12px 16px;
-                    border-radius: 8px;
-                    overflow-x: auto;
-                }
-                table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    margin: 16px 0;
-                }
-                th, td {
-                    border: 1px solid rgba(142,142,147,0.3);
-                    padding: 6px 8px;
-                    text-align: left;
-                }
-                blockquote {
-                    border-left: 3px solid rgba(142,142,147,0.4);
-                    margin: 0;
-                    padding-left: 12px;
-                    color: rgba(60,60,67,0.7);
-                }
-            </style>
-            </head>
-            <body>
-            \(htmlBody)
-            </body>
-            </html>
-            """
+            let html = self.buildMarkdownHTML(content: text, isFolderPreview: true)
             DispatchQueue.main.async {
                 guard self.previewedItem === item else { return }
-                self.webView.loadHTMLString(template, baseURL: item.url.deletingLastPathComponent())
+                self.webView.loadHTMLString(html, baseURL: item.url.deletingLastPathComponent())
             }
         }
     }
     
-    private func makeHTML(fromMarkdown markdown: String) -> String {
-        if markdown.isEmpty {
-            return "<p>No content.</p>"
+    private func loadPDFPreview(for item: FileItem) {
+        previewSpinner.startAnimation(nil)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            guard let pdfDoc = PDFDocument(url: item.url), let page = pdfDoc.page(at: 0) else {
+                DispatchQueue.main.async {
+                    guard self.previewedItem === item else { return }
+                    self.previewSpinner.stopAnimation(nil)
+                    self.loadLargeIcon(for: item) { icon in
+                        guard self.previewedItem === item else { return }
+                        self.previewImageView.image = icon
+                    }
+                }
+                return
+            }
+            
+            let thumbnail = page.thumbnail(of: CGSize(width: 340, height: 340), for: .cropBox)
+            let pageCount = pdfDoc.pageCount
+            
+            DispatchQueue.main.async {
+                guard self.previewedItem === item else { return }
+                self.previewSpinner.stopAnimation(nil)
+                self.previewImageView.image = thumbnail
+                self.previewInfoLabel.stringValue = "\(item.previewInfo(sizeFormatter: self.byteFormatter, dateFormatter: self.dateFormatter)) · \(pageCount) \(pageCount == 1 ? "page" : "pages")"
+            }
         }
-        if #available(macOS 12.0, *) {
-            if let attributed = try? AttributedString(markdown: markdown) {
-                let nsAttr = NSAttributedString(attributed)
-                if let data = try? nsAttr.data(
-                    from: NSRange(location: 0, length: nsAttr.length),
-                    documentAttributes: [.documentType: NSAttributedString.DocumentType.html]
-                ), let rawHTML = String(data: data, encoding: .utf8) {
-                    return extractBody(from: rawHTML)
+    }
+    
+    private func calculateFolderMetrics(at url: URL, completion: @escaping (Int64, Int, Int) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            var totalSize: Int64 = 0
+            var folderCount = 0
+            var fileCount = 0
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let timeout = PreviewConstants.analysisTimeoutSeconds
+            let maxDepth = PreviewConstants.maxRecursionDepth
+            
+            let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey]
+            guard let enumerator = FileManager.default.enumerator(
+                at: url,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { return }
+            
+            for case let fileURL as URL in enumerator {
+                if CFAbsoluteTimeGetCurrent() - startTime > timeout {
+                    break
+                }
+                if enumerator.level > maxDepth {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                guard let values = try? fileURL.resourceValues(forKeys: Set(keys)) else { continue }
+                if values.isDirectory == true {
+                    folderCount += 1
+                } else {
+                    fileCount += 1
+                    totalSize += Int64(values.totalFileAllocatedSize ?? values.fileSize ?? 0)
                 }
             }
+            
+            DispatchQueue.main.async {
+                completion(totalSize, folderCount, fileCount)
+            }
         }
-        let escaped = markdown
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-        return "<pre>\(escaped)</pre>"
     }
     
-    private func extractBody(from html: String) -> String {
-        guard let bodyStartRange = html.range(of: "<body", options: .caseInsensitive),
-              let closingBracket = html[bodyStartRange.lowerBound...].firstIndex(of: ">"),
-              let bodyEndRange = html.range(of: "</body>", options: .caseInsensitive) else {
-            return html
-        }
-        let start = html.index(after: closingBracket)
-        return String(html[start..<bodyEndRange.lowerBound])
+    private func buildMarkdownHTML(content: String, isFolderPreview: Bool) -> String {
+        let escapedContent = content
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "$", with: "\\$")
+        
+        let padding = isFolderPreview ? "16px 20px" : "20px 48px 40px 48px"
+        
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+            <style>
+                :root { color-scheme: light dark; }
+                * { box-sizing: border-box; }
+                body {
+                    margin: 0;
+                    padding: \(padding);
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #1d1d1f;
+                    background: transparent;
+                }
+                h1, h2, h3, h4, h5, h6 {
+                    margin-top: 20px;
+                    margin-bottom: 12px;
+                    font-weight: 600;
+                    line-height: 1.25;
+                }
+                h1 { font-size: 1.8em; border-bottom: 1px solid #e1e4e8; padding-bottom: 6px; }
+                h2 { font-size: 1.4em; border-bottom: 1px solid #e1e4e8; padding-bottom: 4px; }
+                h3 { font-size: 1.15em; }
+                p { margin: 0 0 14px 0; }
+                a { color: #0969da; text-decoration: none; }
+                a:hover { text-decoration: underline; }
+                code {
+                    font-family: "SF Mono", Monaco, Menlo, Consolas, monospace;
+                    font-size: 12px;
+                    background: rgba(175,184,193,0.2);
+                    padding: 2px 5px;
+                    border-radius: 4px;
+                }
+                pre {
+                    background: #f6f8fa;
+                    padding: 12px 14px;
+                    border-radius: 6px;
+                    overflow-x: auto;
+                    border: 1px solid #e1e4e8;
+                    margin: 14px 0;
+                    color: #24292f;
+                }
+                pre code { background: none; padding: 0; color: inherit; }
+                ul, ol { margin: 0 0 14px 0; padding-left: 24px; }
+                li { margin: 3px 0; }
+                blockquote {
+                    margin: 0 0 14px 0;
+                    padding: 0 14px;
+                    border-left: 4px solid #d0d7de;
+                    color: #57606a;
+                }
+                table { border-collapse: collapse; width: 100%; margin: 14px 0; }
+                th, td { border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; }
+                th { background: #f6f8fa; font-weight: 600; }
+                img { max-width: 100%; height: auto; border-radius: 6px; margin: 12px 0; }
+                hr { border: none; border-top: 1px solid #e1e4e8; margin: 20px 0; }
+                
+                /* Table of Contents */
+                #toc-container {
+                    margin-bottom: 16px;
+                    padding: 8px 12px;
+                    background: rgba(142, 142, 147, 0.08);
+                    border: 1px solid rgba(142, 142, 147, 0.2);
+                    border-radius: 6px;
+                    font-size: 12px;
+                }
+                #toc-container summary {
+                    font-weight: 600;
+                    cursor: pointer;
+                    user-select: none;
+                }
+                #toc-nav {
+                    margin-top: 8px;
+                    padding-left: 14px;
+                    line-height: 1.5;
+                }
+                #toc-nav a {
+                    display: block;
+                    color: inherit;
+                    text-decoration: none;
+                    padding: 2px 0;
+                }
+                #toc-nav a:hover {
+                    color: #0969da;
+                    text-decoration: underline;
+                }
+                
+                /* Dark Mode Override (Must be at the bottom for CSS cascading precedence) */
+                @media (prefers-color-scheme: dark) {
+                    body { color: #e5e5e5; }
+                    a { color: #58a6ff; }
+                    #toc-nav a:hover { color: #58a6ff; }
+                    code { background: rgba(110,118,129,0.3) !important; color: #e5e5e5 !important; }
+                    pre {
+                        background: #282c34 !important;
+                        border-color: #3e4451 !important;
+                        color: #abb2bf !important;
+                    }
+                    pre code { background: none !important; color: #abb2bf !important; }
+                    h1, h2 { border-bottom-color: rgba(110,118,129,0.3) !important; }
+                    th { background: rgba(110,118,129,0.2) !important; }
+                    td, th { border-color: rgba(110,118,129,0.3) !important; }
+                    blockquote { border-left-color: rgba(110,118,129,0.4) !important; color: #a0a0a0 !important; }
+                    hr { border-top-color: rgba(110,118,129,0.3) !important; }
+                    #toc-container {
+                        background: rgba(255, 255, 255, 0.05) !important;
+                        border-color: rgba(255, 255, 255, 0.1) !important;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <details id="toc-container" style="display:none;">
+                <summary>Table of Contents</summary>
+                <nav id="toc-nav"></nav>
+            </details>
+            <div id="content"></div>
+            <script>
+                const rawMarkdown = `\(escapedContent)`;
+                
+                // Fallback parser in case CDN marked is blocked in sandbox or offline
+                function fallbackMarkdown(md) {
+                    let html = md
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;');
+                    html = html.replace(/```([\\s\\S]*?)```/g, '<pre><code>$1</code></pre>');
+                    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+                    html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+                    html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+                    html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+                    html = html.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+                    html = html.replace(/\\*(.*?)\\*/g, '<em>$1</em>');
+                    html = html.replace(/^\\> (.*$)/gim, '<blockquote>$1</blockquote>');
+                    html = html.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href="$2">$1</a>');
+                    html = html.replace(/\\n\\s*\\n/g, '</p><p>');
+                    return '<p>' + html + '</p>';
+                }
+                
+                const contentEl = document.getElementById('content');
+                if (typeof marked !== 'undefined' && marked.parse) {
+                    contentEl.innerHTML = marked.parse(rawMarkdown);
+                } else {
+                    contentEl.innerHTML = fallbackMarkdown(rawMarkdown);
+                }
+                
+                // Generate Table of Contents (TOC)
+                const headings = contentEl.querySelectorAll('h1, h2, h3');
+                if (headings.length >= 2) {
+                    const tocContainer = document.getElementById('toc-container');
+                    const tocNav = document.getElementById('toc-nav');
+                    headings.forEach((h, idx) => {
+                        const id = 'peekx-heading-' + idx;
+                        h.id = id;
+                        const link = document.createElement('a');
+                        link.href = '#' + id;
+                        link.textContent = h.textContent;
+                        link.style.marginLeft = h.tagName === 'H2' ? '12px' : (h.tagName === 'H3' ? '24px' : '0px');
+                        link.onclick = (e) => {
+                            e.preventDefault();
+                            h.scrollIntoView({ behavior: 'smooth' });
+                        };
+                        tocNav.appendChild(link);
+                    });
+                    tocContainer.style.display = 'block';
+                }
+            </script>
+        </body>
+        </html>
+        """
     }
     
     private func loadPreviewImage(for item: FileItem) {
@@ -1171,8 +1296,19 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private lazy var contextMenu: NSMenu = {
         let menu = NSMenu(title: "Actions")
         menu.addItem(withTitle: "Copy Path", action: #selector(copyPathAction), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Expand All Folders", action: #selector(expandAllFoldersAction), keyEquivalent: "")
+        menu.addItem(withTitle: "Collapse All Folders", action: #selector(collapseAllFoldersAction), keyEquivalent: "")
         return menu
     }()
+    
+    @objc private func expandAllFoldersAction() {
+        outlineView.expandItem(nil, expandChildren: true)
+    }
+    
+    @objc private func collapseAllFoldersAction() {
+        outlineView.collapseItem(nil, expandChildren: true)
+    }
     
     
     private func loadChildren(for item: FileItem, completion: @escaping () -> Void) {
@@ -1421,16 +1557,36 @@ extension PreviewViewController: QLPreviewPanelDataSource, QLPreviewPanelDelegat
     }
 }
 
+// MARK: - NSSplitViewDelegate
+extension PreviewViewController: NSSplitViewDelegate {
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard didSetInitialSplitPosition, splitView.arrangedSubviews.count > 0 else { return }
+        let currentLeftWidth = Double(splitView.arrangedSubviews[0].frame.width)
+        if currentLeftWidth > 100 {
+            var settings = SharedSettings.load()
+            settings.savedSplitPosition = currentLeftWidth
+            settings.save()
+        }
+    }
+}
+
 // MARK: - Outline Keyboard Delegate
 extension PreviewViewController: FinderOutlineViewKeyboardDelegate {
     func outlineView(_ outlineView: FinderOutlineView, handle event: NSEvent) -> Bool {
         let commandPressed = event.modifierFlags.contains(.command)
-        switch (event.keyCode, commandPressed) {
-        case (49, false): // Space
+        let optionPressed = event.modifierFlags.contains(.option)
+        switch (event.keyCode, commandPressed, optionPressed) {
+        case (49, false, false): // Space
             showQuickLook()
             return true
-        case (_, true) where event.charactersIgnoringModifiers == "c":
+        case (_, true, false) where event.charactersIgnoringModifiers == "c":
             copyPathAction()
+            return true
+        case (124, false, true): // Option + Right arrow: Expand All
+            expandAllFoldersAction()
+            return true
+        case (123, false, true): // Option + Left arrow: Collapse All
+            collapseAllFoldersAction()
             return true
         default:
             return false

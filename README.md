@@ -12,7 +12,7 @@ A native macOS Quick Look extension that provides instant previews of folder con
 > **⭐ Support This Project**  
 > If you find PeekX useful, please consider starring this repository! Unlike similar apps that cost $5-10, PeekX is completely free and open source. **A star is the only payment I ask for** - it helps others discover the project and motivates continued development.
 >
-> [⭐ Star this repo](https://github.com/altic-dev/PeekX) • It takes just one click!
+> [⭐ Star this repo](https://github.com/AjmalVh/PeekX) • It takes just one click!
 
 ---
 
@@ -29,10 +29,13 @@ PeekX enhances the macOS Quick Look feature by allowing you to preview the conte
 ## Features
 
 - **Instant Folder Preview** - View folder contents directly in Quick Look
-- **File Statistics** - See total file count, folder size, and file type breakdown
+- **Accurate File & Folder Statistics** - Total file count, recursive folder size calculation, and breakdown
+- **Rich Markdown Previews** - Fast offline rendering, readable Dark Mode code blocks, and automatic Table of Contents
+- **PDF Previews** - QuickLook thumbnail previews for PDF documents
+- **Configurable Layout & Persistence** - Customizable default window size and persistent split divider positions
+- **Fast Navigation** - Expand/collapse all subfolders at once with toolbar buttons and `⌥→` / `⌥←`
 - **Modern Interface** - Clean, native macOS design that matches system aesthetics
-- **Lightweight** - Minimal resource usage with fast rendering
-- **Sandboxed** - Fully sandboxed for security and privacy
+- **Lightweight & Sandboxed** - Minimal resource usage, fully sandboxed for security and privacy
 - **Universal Binary** - Supports both Apple Silicon and Intel Macs
 
 ## Requirements
@@ -42,19 +45,27 @@ PeekX enhances the macOS Quick Look feature by allowing you to preview the conte
 
 ## Installation
 
-### Option 1: Download Release (Recommended)
+### Option 1: Homebrew / Cask (Recommended)
 
-1. Download the latest `PeekX-X.X.dmg` from the [Releases](https://github.com/altic-dev/PeekX/releases) page
+```bash
+# Add tap and install
+brew tap AjmalVh/peekx https://github.com/AjmalVh/PeekX
+brew install --cask peekx
+```
+
+### Option 2: Download Release
+
+1. Download the latest `PeekX-X.X.dmg` from the [Releases](https://github.com/AjmalVh/PeekX/releases) page
 2. Open the DMG file
 3. Drag PeekX to your Applications folder
-4. Launch PeekX once to register the Quick Look extension
-5. The app will automatically register and quit
+4. Launch PeekX once to register the Quick Look extension and configure preferences
+5. The extension will automatically be enabled
 
-### Option 2: Build from Source
+### Option 3: Build from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/altic-dev/PeekX.git
+git clone https://github.com/AjmalVh/PeekX.git
 cd PeekX
 
 # Open in Xcode and build
@@ -190,7 +201,7 @@ Built with:
 
 ### Bug Reports
 
-Found a bug? Please report it on [GitHub Issues](https://github.com/altic-dev/PeekX/issues):
+Found a bug? Please report it on [GitHub Issues](https://github.com/AjmalVh/PeekX/issues):
 
 - Check existing issues first to avoid duplicates
 - Include your macOS version and system information
@@ -201,7 +212,7 @@ Found a bug? Please report it on [GitHub Issues](https://github.com/altic-dev/Pe
 
 Have an idea for a new feature? We'd love to hear it!
 
-- Open a feature request on [GitHub Issues](https://github.com/altic-dev/PeekX/issues)
+- Open a feature request on [GitHub Issues](https://github.com/AjmalVh/PeekX/issues)
 - Describe the feature and why it would be useful
 - Include any mockups or examples if applicable
 - Label your issue with "enhancement"
