@@ -1,8 +1,10 @@
 cask "peekx" do
+  arch arm: "arm64", intel: "x86_64"
+
   version "1.2"
   sha256 :no_check
 
-  url "https://github.com/AjmalVh/PeekX/releases/download/v#{version}/PeekX-#{version}.dmg"
+  url "https://github.com/AjmalVh/PeekX/releases/download/v#{version}/PeekX-#{version}-#{arch}.dmg"
   name "PeekX"
   desc "Native macOS Quick Look extension for folder and markdown previews"
   homepage "https://github.com/AjmalVh/PeekX"

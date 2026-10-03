@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag / Version name to release (e.g. v1.1.1, v1.2)'
+        description: 'Tag / Version name to release (e.g. v1.2, v1.2.1)'
         required: false
         default: ''
       draft:
@@ -54,7 +54,7 @@ jobs:
             TAG="${{ github.ref_name }}"
           else
             PROJ_VERSION=$(grep -m1 "MARKETING_VERSION" PeekX.xcodeproj/project.pbxproj | awk '{print $3}' | tr -d '";')
-            TAG="v${PROJ_VERSION:-1.1}"
+            TAG="v${PROJ_VERSION:-1.2}"
           fi
           VERSION="${TAG#v}"
           echo "TAG=$TAG" >> $GITHUB_ENV
@@ -70,67 +70,133 @@ jobs:
             -destination 'generic/platform=macOS' \
             -derivedDataPath ./build \
             ONLY_ACTIVE_ARCH=NO \
+            ARCHS="arm64 x86_64" \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=""
 
-      - name: Code Sign Binaries (Ad-Hoc)
+      - name: Prepare Architecture Bundles (Universal, Apple Silicon, Intel)
         run: |
-          APP_PATH="./build/Build/Products/Release/PeekX.app"
-          if [ -d "$APP_PATH/Contents/PlugIns" ]; then
-            find "$APP_PATH/Contents/PlugIns" -name "*.appex" -type d -exec codesign --force --deep --sign - {} +
+          ORIGINAL_APP="./build/Build/Products/Release/PeekX.app"
+          rm -rf dist
+          mkdir -p dist/universal dist/arm64 dist/x86_64
+
+          # 1. Universal bundle
+          cp -R "$ORIGINAL_APP" dist/universal/PeekX.app
+          if [ -d "dist/universal/PeekX.app/Contents/PlugIns" ]; then
+            find "dist/universal/PeekX.app/Contents/PlugIns" -name "*.appex" -type d -exec codesign --force --deep --sign - {} +
           fi
-          codesign --force --deep --sign - "$APP_PATH"
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign --force --deep --sign - "dist/universal/PeekX.app"
+          codesign --verify --deep --strict --verbose=2 "dist/universal/PeekX.app"
 
-      - name: Package DMG and ZIP
+          # 2. Apple Silicon (arm64) bundle
+          cp -R "$ORIGINAL_APP" dist/arm64/PeekX.app
+          lipo -thin arm64 "dist/arm64/PeekX.app/Contents/MacOS/PeekX" -output "dist/arm64/PeekX.app/Contents/MacOS/PeekX.thin"
+          mv "dist/arm64/PeekX.app/Contents/MacOS/PeekX.thin" "dist/arm64/PeekX.app/Contents/MacOS/PeekX"
+
+          if [ -d "dist/arm64/PeekX.app/Contents/PlugIns" ]; then
+            for appex in dist/arm64/PeekX.app/Contents/PlugIns/*.appex; do
+              if [ -d "$appex" ]; then
+                name=$(basename "$appex" .appex)
+                lipo -thin arm64 "$appex/Contents/MacOS/$name" -output "$appex/Contents/MacOS/$name.thin"
+                mv "$appex/Contents/MacOS/$name.thin" "$appex/Contents/MacOS/$name"
+                codesign --force --deep --sign - "$appex"
+              fi
+            done
+          fi
+          codesign --force --deep --sign - "dist/arm64/PeekX.app"
+          codesign --verify --deep --strict --verbose=2 "dist/arm64/PeekX.app"
+
+          # 3. Intel (x86_64) bundle
+          cp -R "$ORIGINAL_APP" dist/x86_64/PeekX.app
+          lipo -thin x86_64 "dist/x86_64/PeekX.app/Contents/MacOS/PeekX" -output "dist/x86_64/PeekX.app/Contents/MacOS/PeekX.thin"
+          mv "dist/x86_64/PeekX.app/Contents/MacOS/PeekX.thin" "dist/x86_64/PeekX.app/Contents/MacOS/PeekX"
+
+          if [ -d "dist/x86_64/PeekX.app/Contents/PlugIns" ]; then
+            for appex in dist/x86_64/PeekX.app/Contents/PlugIns/*.appex; do
+              if [ -d "$appex" ]; then
+                name=$(basename "$appex" .appex)
+                lipo -thin x86_64 "$appex/Contents/MacOS/$name" -output "$appex/Contents/MacOS/$name.thin"
+                mv "$appex/Contents/MacOS/$name.thin" "$appex/Contents/MacOS/$name"
+                codesign --force --deep --sign - "$appex"
+              fi
+            done
+          fi
+          codesign --force --deep --sign - "dist/x86_64/PeekX.app"
+          codesign --verify --deep --strict --verbose=2 "dist/x86_64/PeekX.app"
+
+          echo "--- Architecture Verification ---"
+          echo "Universal binary:"
+          lipo -info "dist/universal/PeekX.app/Contents/MacOS/PeekX"
+          echo "Apple Silicon (arm64) binary:"
+          lipo -info "dist/arm64/PeekX.app/Contents/MacOS/PeekX"
+          echo "Intel (x86_64) binary:"
+          lipo -info "dist/x86_64/PeekX.app/Contents/MacOS/PeekX"
+
+      - name: Package DMGs and ZIPs
         run: |
-          APP_PATH="./build/Build/Products/Release/PeekX.app"
-          DMG_STAGING="dmg_staging"
-          rm -rf "$DMG_STAGING"
-          mkdir -p "$DMG_STAGING"
-          cp -R "$APP_PATH" "$DMG_STAGING/"
-          ln -s /Applications "$DMG_STAGING/Applications"
+          rm -rf artifacts
+          mkdir -p artifacts
 
-          DMG_NAME="PeekX-${VERSION}.dmg"
-          ZIP_NAME="PeekX-${VERSION}.zip"
+          package_flavor() {
+            local flavor="$1"
+            local suffix="$2"
+            local app_path="dist/${flavor}/PeekX.app"
+            local staging="staging_${flavor}"
 
-          echo "Creating $DMG_NAME..."
-          hdiutil create \
-            -volname "PeekX" \
-            -srcfolder "$DMG_STAGING" \
-            -ov \
-            -format UDZO \
-            "$DMG_NAME"
+            local dmg_name="PeekX-${VERSION}${suffix}.dmg"
+            local zip_name="PeekX-${VERSION}${suffix}.zip"
 
-          echo "Creating $ZIP_NAME..."
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+            rm -rf "$staging"
+            mkdir -p "$staging"
+            cp -R "$app_path" "$staging/"
+            ln -s /Applications "$staging/Applications"
 
-          echo "Generating SHA-256 checksums..."
-          shasum -a 256 "$DMG_NAME" > "${DMG_NAME}.sha256"
-          shasum -a 256 "$ZIP_NAME" > "${ZIP_NAME}.sha256"
+            echo "Packaging $dmg_name..."
+            hdiutil create \
+              -volname "PeekX" \
+              -srcfolder "$staging" \
+              -ov \
+              -format UDZO \
+              "artifacts/$dmg_name"
 
-          ls -lh "$DMG_NAME" "$ZIP_NAME" *.sha256
+            echo "Packaging $zip_name..."
+            ditto -c -k --sequesterRsrc --keepParent "$app_path" "artifacts/$zip_name"
+
+            (cd artifacts && shasum -a 256 "$dmg_name" > "${dmg_name}.sha256")
+            (cd artifacts && shasum -a 256 "$zip_name" > "${zip_name}.sha256")
+          }
+
+          # Apple Silicon (arm64)
+          package_flavor "arm64" "-arm64"
+
+          # Intel (x86_64)
+          package_flavor "x86_64" "-x86_64"
+
+          # Universal (default)
+          package_flavor "universal" ""
+
+          # Universal (explicit suffix)
+          cp "artifacts/PeekX-${VERSION}.dmg" "artifacts/PeekX-${VERSION}-universal.dmg"
+          cp "artifacts/PeekX-${VERSION}.zip" "artifacts/PeekX-${VERSION}-universal.zip"
+          (cd artifacts && shasum -a 256 "PeekX-${VERSION}-universal.dmg" > "PeekX-${VERSION}-universal.dmg.sha256")
+          (cd artifacts && shasum -a 256 "PeekX-${VERSION}-universal.zip" > "PeekX-${VERSION}-universal.zip.sha256")
+
+          echo "Generated release artifacts:"
+          ls -lh artifacts/
 
       - name: Upload Release Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PeekX-${{ env.VERSION }}
-          path: |
-            PeekX-${{ env.VERSION }}.dmg
-            PeekX-${{ env.VERSION }}.zip
-            PeekX-${{ env.VERSION }}.dmg.sha256
-            PeekX-${{ env.VERSION }}.zip.sha256
+          name: PeekX-${{ env.VERSION }}-all-architectures
+          path: artifacts/*
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DMG_NAME="PeekX-${VERSION}.dmg"
-          ZIP_NAME="PeekX-${VERSION}.zip"
-
           EXTRA_FLAGS=()
           if [ "${{ inputs.draft }}" = "true" ]; then
             EXTRA_FLAGS+=(--draft)
@@ -140,20 +206,12 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists. Uploading/updating release assets..."
-            gh release upload "$TAG" \
-              "$DMG_NAME" \
-              "$ZIP_NAME" \
-              "${DMG_NAME}.sha256" \
-              "${ZIP_NAME}.sha256" \
-              --clobber
+            echo "Release $TAG already exists. Uploading/updating all architecture assets..."
+            gh release upload "$TAG" artifacts/* --clobber
           else
-            echo "Creating release $TAG..."
+            echo "Creating release $TAG with all architecture assets..."
             gh release create "$TAG" \
-              "$DMG_NAME" \
-              "$ZIP_NAME" \
-              "${DMG_NAME}.sha256" \
-              "${ZIP_NAME}.sha256" \
+              artifacts/* \
               --title "PeekX ${TAG}" \
               --generate-notes \
               "${EXTRA_FLAGS[@]}"

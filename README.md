@@ -55,7 +55,10 @@ brew install --cask peekx
 
 ### Option 2: Download Release
 
-1. Download the latest `PeekX-X.X.dmg` from the [Releases](https://github.com/AjmalVh/PeekX/releases) page
+1. Download the release DMG from the [Releases](https://github.com/AjmalVh/PeekX/releases) page:
+   - **Apple Silicon (M1/M2/M3/M4):** `PeekX-X.X-arm64.dmg`
+   - **Intel Macs:** `PeekX-X.X-x86_64.dmg`
+   - **Universal (both architectures):** `PeekX-X.X.dmg`
 2. Open the DMG file
 3. Drag PeekX to your Applications folder
 4. Launch PeekX once to register the Quick Look extension and configure preferences
